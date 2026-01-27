@@ -1,5 +1,5 @@
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import Header from './components/Header';
 import Footer from './components/Footer';
 import SearchForm from './components/SearchForm';
@@ -33,72 +33,90 @@ const App: React.FC = () => {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
 
+  // Hàm tải dữ liệu chung, dùng cho cả khởi động và cập nhật Realtime
+  const fetchStudentsData = useCallback(async (showLoading = false) => {
+    if (showLoading) setInitializing(true);
+    
+    try {
+      // 1. Tải danh sách học sinh
+      const { data: studentsData, error: studentsError } = await supabase
+        .from('students')
+        .select('*')
+        .order('created_at', { ascending: false });
+      
+      if (studentsError) {
+        if (studentsError.code !== 'PGRST116' && !studentsError.message.includes('not found')) {
+           console.error("Lỗi tải danh sách thí sinh:", studentsError.message);
+        }
+      }
+
+      if (studentsData) {
+        setStudents(studentsData);
+      } else {
+        setStudents([]); // Đảm bảo danh sách rỗng nếu không có dữ liệu
+      }
+
+      // 2. Tải cấu hình trang
+      const { data: configData, error: configError } = await supabase
+        .from('site_config')
+        .select('*')
+        .single();
+      
+      if (!configError && configData) {
+        const { id, created_at, ...cleanConfig } = configData;
+        setSiteConfig(cleanConfig as SiteConfig);
+      } else if (configError && (configError.code === 'PGRST116' || configError.message.includes('not found'))) {
+        // Nếu chưa có config thì tạo mặc định
+        await supabase.from('site_config').insert([{ ...DEFAULT_CONFIG, id: 1 }]);
+      }
+
+    } catch (err: any) {
+      console.error('Database Error:', err.message);
+      if (err.message.includes('students') || err.message.includes('cache')) {
+          setDbError(true);
+      }
+    } finally {
+      if (showLoading) setInitializing(false);
+    }
+  }, []);
+
   useEffect(() => {
-    // Check initial auth session
+    // Kiểm tra session đăng nhập
     supabase.auth.getSession().then(({ data: { session } }) => {
       if (session) setIsLoggedIn(true);
     });
 
-    // Listen for auth changes
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+    const { data: { subscription: authListener } } = supabase.auth.onAuthStateChange((_event, session) => {
       if (session) setIsLoggedIn(true);
     });
 
-    const startSession = async () => {
-      try {
-        setInitializing(true);
-        setDbError(false);
-        
-        // MẶC ĐỊNH XÓA TOÀN BỘ DANH DÁCH HỌC SINH CŨ KHI KHỞI ĐỘNG
-        // Để đảm bảo danh sách rỗng ban đầu.
-        const { error: deleteError } = await supabase
-          .from('students')
-          .delete()
-          .neq('id', '0'); // Xóa tất cả các bản ghi có id khác '0' (tất cả)
-        
-        if (deleteError) {
-          console.warn("Lỗi khi xóa dữ liệu cũ:", deleteError.message);
-          // Nếu bảng chưa tồn tại, có thể bỏ qua lỗi này
-          if (!deleteError.message.includes('not found')) {
-            // throw deleteError; 
-          }
+    // Tải dữ liệu lần đầu
+    fetchStudentsData(true);
+
+    // Đăng ký nhận sự kiện thay đổi từ Database (Realtime)
+    // Giúp các máy khác tự động cập nhật khi có máy nhập liệu
+    const channel = supabase.channel('db-changes')
+      .on(
+        'postgres_changes', 
+        { event: '*', schema: 'public', table: 'students' }, 
+        (payload) => {
+          console.log('Phát hiện thay đổi dữ liệu:', payload);
+          // Tải lại dữ liệu ngầm (không hiện loading) để đảm bảo đồng bộ chính xác
+          fetchStudentsData(false);
         }
+      )
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'site_config' },
+        () => fetchStudentsData(false)
+      )
+      .subscribe();
 
-        // Đặt danh sách local về rỗng
-        setStudents([]);
-
-        // Fetch Config
-        const { data: configData, error: configError } = await supabase
-          .from('site_config')
-          .select('*')
-          .single();
-        
-        if (!configError && configData) {
-          const { id, created_at, ...cleanConfig } = configData;
-          setSiteConfig(cleanConfig as SiteConfig);
-        } else if (configError && (configError.code === 'PGRST116' || configError.message.includes('not found'))) {
-          // Seed default config
-          await supabase.from('site_config').insert([{ ...DEFAULT_CONFIG, id: 1 }]);
-        }
-
-      } catch (err: any) {
-        console.error('Database Error:', err.message);
-        if (err.message.includes('students') || err.message.includes('cache')) {
-            setDbError(true);
-        }
-      } finally {
-        setInitializing(false);
-      }
-    };
-
-    startSession();
-
-    // Đã xóa phần subscription realtime để tránh vòng lặp xóa dữ liệu và giữ trạng thái rỗng ban đầu sạch sẽ.
-    
     return () => { 
-      subscription.unsubscribe();
+      supabase.removeChannel(channel); 
+      authListener.unsubscribe();
     };
-  }, []);
+  }, [fetchStudentsData]);
 
   const handleSearch = async (params: SearchParams) => {
     setLoading(true);
@@ -132,6 +150,8 @@ const App: React.FC = () => {
     try {
       const { error } = await supabase.from('students').update(updated).eq('id', updated.id);
       if (error) throw error;
+      // Không cần setStudents thủ công ở đây vì Realtime sẽ lo việc đó
+      // Tuy nhiên cập nhật lạc quan (optimistic update) giúp UI mượt hơn
       setStudents(prev => prev.map(s => s.id === updated.id ? updated : s));
     } catch (err: any) { alert('Lỗi: ' + err.message); }
   };
@@ -149,10 +169,9 @@ const App: React.FC = () => {
       return;
     }
     try {
-      // Supabase yêu cầu điều kiện where khi delete. Dùng id khác 0 để xóa tất cả.
       const { error } = await supabase.from('students').delete().neq('id', '0');
       if (error) throw error;
-      setStudents([]);
+      setStudents([]); // Xóa ngay trên UI
       alert('Đã xóa toàn bộ dữ liệu học sinh thành công.');
     } catch (err: any) { alert('Lỗi: ' + err.message); }
   };
@@ -161,19 +180,33 @@ const App: React.FC = () => {
     try {
       const { data, error } = await supabase.from('students').insert([newStudent]).select().single();
       if (error) throw error;
+      // Dữ liệu sẽ được cập nhật qua Realtime, nhưng thêm vào đây để phản hồi ngay lập tức
       if (data) setStudents(prev => [data, ...prev]);
     } catch (err: any) { alert('Lỗi: ' + err.message); }
   };
 
   const handleBulkAdd = async (newStudents: Omit<StudentResult, 'id'>[]) => {
     try {
+      // Sử dụng select() để đảm bảo Supabase trả về dữ liệu đã lưu -> Xác nhận lưu thành công
       const { data, error } = await supabase.from('students').insert(newStudents).select();
-      if (error) throw error;
-      if (data) {
-        setStudents(prev => [...data, ...prev]);
-        alert(`THÀNH CÔNG: Đã nhập liệu ${data.length} thí sinh vào hệ thống!`);
+      
+      if (error) {
+        console.error("Bulk Insert Error:", error);
+        throw error;
       }
-    } catch (err: any) { alert('Lỗi: ' + err.message); }
+
+      if (data && data.length > 0) {
+        // Cập nhật ngay lập tức vào state hiện tại
+        setStudents(prev => [...data, ...prev]);
+        alert(`THÀNH CÔNG: Đã lưu ${data.length} thí sinh vào cơ sở dữ liệu!`);
+        // Gọi tải lại để đảm bảo thứ tự sắp xếp đúng
+        fetchStudentsData(false);
+      } else {
+        alert("Cảnh báo: Không có dữ liệu nào được phản hồi từ máy chủ. Vui lòng kiểm tra lại.");
+      }
+    } catch (err: any) { 
+      alert('Lỗi khi lưu dữ liệu: ' + err.message); 
+    }
   };
 
   const saveConfigToStorage = async (newConfig: SiteConfig) => {
@@ -213,13 +246,13 @@ const App: React.FC = () => {
     setIsLoggedIn(false);
   };
 
-  if (initializing) return <div className="min-h-screen flex items-center justify-center">Đang làm mới dữ liệu hệ thống...</div>;
+  if (initializing) return <div className="min-h-screen flex items-center justify-center font-bold text-blue-600">Đang kết nối cơ sở dữ liệu...</div>;
 
   if (dbError) return (
     <div className="min-h-screen flex items-center justify-center p-6 text-center">
       <div className="bg-white p-8 rounded-2xl shadow-xl max-w-md">
-        <h2 className="text-xl font-bold text-red-600 mb-4">LỖI CẤU TRÚC DỮ LIỆU</h2>
-        <p className="text-gray-600 mb-6">Bạn cần cập nhật lại bảng trong Supabase theo cấu trúc snake_case mới để sửa lỗi 'Could not find column'.</p>
+        <h2 className="text-xl font-bold text-red-600 mb-4">LỖI KẾT NỐI DỮ LIỆU</h2>
+        <p className="text-gray-600 mb-6">Không thể tải dữ liệu bảng 'students'. Vui lòng kiểm tra cấu trúc bảng trong Supabase.</p>
         <button onClick={() => window.location.reload()} className="px-6 py-2 bg-blue-600 text-white rounded-lg">Thử lại</button>
       </div>
     </div>
