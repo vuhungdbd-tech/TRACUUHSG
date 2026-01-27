@@ -7,7 +7,6 @@ import ResultView from './components/ResultView';
 import AdminDashboard from './components/AdminDashboard';
 import { SearchParams, StudentResult, ViewMode, SiteConfig } from './types';
 import { supabase } from './lib/supabase';
-import { MOCK_STUDENTS } from './data/mockData';
 
 const DEFAULT_CONFIG: SiteConfig = {
   header_top: "SỞ GIÁO DỤC VÀ ĐÀO TẠO THÀNH PHỐ",
@@ -45,45 +44,28 @@ const App: React.FC = () => {
       if (session) setIsLoggedIn(true);
     });
 
-    const initAppData = async () => {
+    const startSession = async () => {
       try {
         setInitializing(true);
         setDbError(false);
         
-        // Fetch students
-        const { data: studentsData, error: studentsError } = await supabase
+        // MẶC ĐỊNH XÓA TOÀN BỘ DANH DÁCH HỌC SINH CŨ KHI KHỞI ĐỘNG
+        // Để đảm bảo danh sách rỗng ban đầu.
+        const { error: deleteError } = await supabase
           .from('students')
-          .select('*')
-          .order('created_at', { ascending: false });
+          .delete()
+          .neq('id', '0'); // Xóa tất cả các bản ghi có id khác '0' (tất cả)
         
-        if (studentsError) {
-          if (studentsError.code === 'PGRST116' || studentsError.message.includes('not found')) {
-             console.warn("Bảng students chưa được tạo.");
-          } else {
-             throw studentsError;
+        if (deleteError) {
+          console.warn("Lỗi khi xóa dữ liệu cũ:", deleteError.message);
+          // Nếu bảng chưa tồn tại, có thể bỏ qua lỗi này
+          if (!deleteError.message.includes('not found')) {
+            // throw deleteError; 
           }
         }
 
-        // Handle students data and seeding
-        if (studentsData) {
-          if (studentsData.length === 0) {
-            console.log("Database empty. Seeding mock data...");
-            const seedData = MOCK_STUDENTS.map(({ id, ...rest }) => rest);
-            const { error: seedError, data: seededStudents } = await supabase
-              .from('students')
-              .insert(seedData)
-              .select();
-            
-            if (!seedError && seededStudents) {
-              setStudents(seededStudents);
-            } else {
-              console.error("Error seeding data:", seedError);
-              setStudents([]);
-            }
-          } else {
-            setStudents(studentsData);
-          }
-        }
+        // Đặt danh sách local về rỗng
+        setStudents([]);
 
         // Fetch Config
         const { data: configData, error: configError } = await supabase
@@ -109,14 +91,11 @@ const App: React.FC = () => {
       }
     };
 
-    initAppData();
+    startSession();
 
-    const channel = supabase.channel('db-changes')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'students' }, () => initAppData())
-      .subscribe();
-
+    // Đã xóa phần subscription realtime để tránh vòng lặp xóa dữ liệu và giữ trạng thái rỗng ban đầu sạch sẽ.
+    
     return () => { 
-      supabase.removeChannel(channel); 
       subscription.unsubscribe();
     };
   }, []);
@@ -165,6 +144,19 @@ const App: React.FC = () => {
     } catch (err: any) { alert('Lỗi: ' + err.message); }
   };
 
+  const handleDeleteAll = async () => {
+    if (!window.confirm('CẢNH BÁO: Bạn có chắc chắn muốn xóa TOÀN BỘ danh sách học sinh? Hành động này không thể hoàn tác!')) {
+      return;
+    }
+    try {
+      // Supabase yêu cầu điều kiện where khi delete. Dùng id khác 0 để xóa tất cả.
+      const { error } = await supabase.from('students').delete().neq('id', '0');
+      if (error) throw error;
+      setStudents([]);
+      alert('Đã xóa toàn bộ dữ liệu học sinh thành công.');
+    } catch (err: any) { alert('Lỗi: ' + err.message); }
+  };
+
   const handleAddStudent = async (newStudent: Omit<StudentResult, 'id'>) => {
     try {
       const { data, error } = await supabase.from('students').insert([newStudent]).select().single();
@@ -196,7 +188,7 @@ const App: React.FC = () => {
     e.preventDefault();
     setLoading(true);
 
-    // Fallback login for development or when Supabase Auth is not fully configured
+    // Fallback login for development
     if (email === 'admin@school.edu.vn' && password === 'admin123') {
       setIsLoggedIn(true);
       setLoading(false);
@@ -221,7 +213,7 @@ const App: React.FC = () => {
     setIsLoggedIn(false);
   };
 
-  if (initializing) return <div className="min-h-screen flex items-center justify-center">Đang tải...</div>;
+  if (initializing) return <div className="min-h-screen flex items-center justify-center">Đang làm mới dữ liệu hệ thống...</div>;
 
   if (dbError) return (
     <div className="min-h-screen flex items-center justify-center p-6 text-center">
@@ -308,6 +300,7 @@ const App: React.FC = () => {
                 siteConfig={siteConfig}
                 onUpdate={handleUpdateStudent} 
                 onDelete={handleDeleteStudent}
+                onDeleteAll={handleDeleteAll}
                 onAdd={handleAddStudent}
                 onBulkAdd={handleBulkAdd}
                 onConfigUpdate={saveConfigToStorage}

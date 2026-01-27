@@ -10,13 +10,14 @@ interface AdminDashboardProps {
   siteConfig: SiteConfig;
   onUpdate: (updated: StudentResult) => void;
   onDelete: (id: string) => void;
+  onDeleteAll: () => void;
   onAdd: (newStudent: Omit<StudentResult, 'id'>) => void;
   onBulkAdd: (newStudents: Omit<StudentResult, 'id'>[]) => void;
   onConfigUpdate: (newConfig: SiteConfig) => void;
   onLogout: () => void;
 }
 
-const AdminDashboard: React.FC<AdminDashboardProps> = ({ students, siteConfig, onUpdate, onDelete, onAdd, onBulkAdd, onConfigUpdate, onLogout }) => {
+const AdminDashboard: React.FC<AdminDashboardProps> = ({ students, siteConfig, onUpdate, onDelete, onDeleteAll, onAdd, onBulkAdd, onConfigUpdate, onLogout }) => {
   const [editingStudent, setEditingStudent] = useState<StudentResult | null>(null);
   const [isAdding, setIsAdding] = useState(false);
   const [isConfiguring, setIsConfiguring] = useState(false);
@@ -106,6 +107,11 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ students, siteConfig, o
           </button>
 
           <div className="w-px h-8 bg-gray-200 mx-1 hidden md:block"></div>
+
+          <button onClick={onDeleteAll} className="px-4 py-2 bg-red-600 hover:bg-red-700 text-white rounded-lg font-bold text-xs uppercase transition-colors flex items-center space-x-1">
+            <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
+            <span>XÓA TẤT CẢ</span>
+          </button>
 
           <button onClick={() => setIsConfiguring(true)} className="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg font-bold text-xs uppercase transition-colors">Cấu hình</button>
           <button onClick={() => setIsAdding(true)} className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg font-bold text-xs uppercase transition-colors">Thêm mới</button>
