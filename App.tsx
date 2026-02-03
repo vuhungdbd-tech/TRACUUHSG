@@ -14,7 +14,8 @@ const DEFAULT_CONFIG: SiteConfig = {
   main_title: "KỲ THI CHỌN HỌC SINH GIỎI THÀNH PHỐ",
   footer_copyright: "Bản quyền thuộc về Trường THPT Chuyên – Phòng GD&ĐT Thành phố",
   footer_address: "Địa chỉ: Số 01 Đại lộ Giáo dục, Quận Trung tâm, TP. Hà Nội",
-  footer_support: "Hỗ trợ kỹ thuật: (024) 123 4567 - Email: congthongtin@school.edu.vn"
+  footer_support: "Hỗ trợ kỹ thuật: (024) 123 4567 - Email: congthongtin@school.edu.vn",
+  favicon_url: "https://cdn-icons-png.flaticon.com/512/2232/2232688.png"
 };
 
 const App: React.FC = () => {
@@ -34,6 +35,21 @@ const App: React.FC = () => {
 
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+
+  // Effect to update favicon dynamically
+  useEffect(() => {
+    if (siteConfig.favicon_url) {
+      const link: HTMLLinkElement | null = document.querySelector("link[rel*='icon']");
+      if (link) {
+        link.href = siteConfig.favicon_url;
+      } else {
+        const newLink = document.createElement('link');
+        newLink.rel = 'icon';
+        newLink.href = siteConfig.favicon_url;
+        document.getElementsByTagName('head')[0].appendChild(newLink);
+      }
+    }
+  }, [siteConfig.favicon_url]);
 
   const fetchStudentsData = useCallback(async (showLoading = false) => {
     if (showLoading) setInitializing(true);
@@ -150,7 +166,6 @@ const App: React.FC = () => {
       cccd: updated.cccd.trim(),
     };
 
-    // Kiểm tra trùng lặp với học sinh khác khi cập nhật
     const isDuplicate = students.some(s => 
       s.id !== updated.id && (s.sbd === normalizedData.sbd || s.cccd === normalizedData.cccd)
     );
@@ -195,7 +210,6 @@ const App: React.FC = () => {
       cccd: newStudent.cccd.trim(),
     };
 
-    // Kiểm tra trùng lặp trước khi thêm
     const isDuplicate = students.some(s => s.sbd === normalizedStudent.sbd || s.cccd === normalizedStudent.cccd);
     if (isDuplicate) {
       alert('Lỗi: học sinh đã tồn tại (SBD hoặc CCCD này đã có trong hệ thống).');
@@ -223,7 +237,6 @@ const App: React.FC = () => {
         cccd: s.cccd.trim(),
       }));
 
-      // 1. Kiểm tra trùng lặp trong chính file Excel
       const excelSbds = new Set();
       const excelCccds = new Set();
       for (const s of normalizedList) {
@@ -235,7 +248,6 @@ const App: React.FC = () => {
         excelCccds.add(s.cccd);
       }
 
-      // 2. Kiểm tra trùng lặp với dữ liệu hiện có trong Database
       const duplicates = normalizedList.filter(ns => 
         students.some(es => es.sbd === ns.sbd || es.cccd === ns.cccd)
       );

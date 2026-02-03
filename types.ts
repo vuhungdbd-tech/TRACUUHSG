@@ -23,6 +23,7 @@ export interface SiteConfig {
   footer_copyright: string;
   footer_address: string;
   footer_support: string;
+  favicon_url?: string;
 }
 
 export type ViewMode = 'search' | 'admin';
